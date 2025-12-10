@@ -19,6 +19,8 @@ const App = () => {
   const [useCurrentTime, setUseCurrentTime] = useState(true);
   const [timetableData, setTimetableData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [dayType, setDayType] = useState('weekday'); // 'weekday' or 'holiday'
+  const [useAutoDetect, setUseAutoDetect] = useState(true);
 
   // 現在時刻を取得
   const getCurrentTime = () => {
@@ -26,9 +28,28 @@ const App = () => {
     return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
   };
 
-  // CSVデータを読み込み
+  // 曜日から運行日種別を判定（土日は休日扱い）
+  const detectDayType = () => {
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0: 日曜, 6: 土曜
+    return (dayOfWeek === 0 || dayOfWeek === 6) ? 'holiday' : 'weekday';
+  };
+
+  // ページ読み込み時に運行日種別を自動判定
   useEffect(() => {
-    fetch('/data/timetable.csv')
+    if (useAutoDetect) {
+      setDayType(detectDayType());
+    }
+  }, [useAutoDetect]);
+
+  // CSVデータを読み込み（運行日種別に応じて切り替え）
+  useEffect(() => {
+    setLoading(true);
+    const filename = dayType === 'weekday'
+      ? '/data/timetable-weekday.csv'
+      : '/data/timetable-holiday.csv';
+
+    fetch(filename)
       .then(response => response.text())
       .then(csvText => {
         Papa.parse(csvText, {
@@ -43,7 +64,7 @@ const App = () => {
         console.error('CSV読み込みエラー:', error);
         setLoading(false);
       });
-  }, []);
+  }, [dayType]);
 
   // ページ読み込み時に前回選択した駅を復元
   useEffect(() => {
@@ -92,6 +113,15 @@ const App = () => {
           const arrMinute = parseInt(arrivalTime.substring(2, 4));
           const arrMinutes = arrHour * 60 + arrMinute;
 
+          // 横浜到着時刻を取得
+          const yokohamaArrival = train['横浜着'];
+          let yokohamaArrivalFormatted = null;
+          if (yokohamaArrival && yokohamaArrival !== '-') {
+            const yokohamaHour = parseInt(yokohamaArrival.substring(0, 2));
+            const yokohamaMinute = parseInt(yokohamaArrival.substring(2, 4));
+            yokohamaArrivalFormatted = `${String(yokohamaHour).padStart(2, '0')}:${String(yokohamaMinute).padStart(2, '0')}`;
+          }
+
           return {
             trainNumber: train['列車番号'],
             trainType: train['種別'],
@@ -100,7 +130,8 @@ const App = () => {
             arrival: `${String(arrHour).padStart(2, '0')}:${String(arrMinute).padStart(2, '0')}`,
             arrivalMinutes: arrMinutes,
             platform: parseInt(train['番線']),
-            directToYokohama: train['行先'] === '桜木町'
+            directToYokohama: train['行先'] !== '東神奈川',
+            yokohamaArrival: yokohamaArrivalFormatted
           };
         })
         .filter(train => train !== null)
@@ -137,6 +168,16 @@ const App = () => {
     setUseCurrentTime(true);
   };
 
+  const handleDayTypeChange = (type) => {
+    setDayType(type);
+    setUseAutoDetect(false);
+  };
+
+  const handleAutoDetectDayType = () => {
+    setDayType(detectDayType());
+    setUseAutoDetect(true);
+  };
+
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-3 md:p-6 flex items-center justify-center">
@@ -159,6 +200,75 @@ const App = () => {
           <p className="text-gray-600 text-xs">
             到着時刻が早い順に表示
           </p>
+        </div>
+
+        {/* 平日／土休日選択と時刻選択を横並び */}
+        <div className="flex gap-2 mb-3">
+          {/* 平日／土休日選択 */}
+          <div className="flex-1 bg-white rounded-lg shadow-lg p-3">
+            <div className="flex items-center gap-1 mb-2">
+              <Clock className="w-4 h-4 text-blue-600" />
+              <span className="font-semibold text-gray-700 text-sm">平日／土休日</span>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleDayTypeChange('weekday')}
+                className={`flex-1 px-3 py-2 rounded-lg font-semibold text-sm ${
+                  dayType === 'weekday' && !useAutoDetect
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700'
+                }`}
+              >
+                平日
+              </button>
+              <button
+                onClick={() => handleDayTypeChange('holiday')}
+                className={`flex-1 px-3 py-2 rounded-lg font-semibold text-sm ${
+                  dayType === 'holiday' && !useAutoDetect
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700'
+                }`}
+              >
+                土休日
+              </button>
+              <button
+                onClick={handleAutoDetectDayType}
+                className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap ${
+                  useAutoDetect
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700'
+                }`}
+              >
+                自動
+              </button>
+            </div>
+          </div>
+
+          {/* 時刻選択 */}
+          <div className="flex-1 bg-white rounded-lg shadow-lg p-3">
+            <div className="flex items-center gap-1 mb-2">
+              <Clock className="w-4 h-4 text-blue-600" />
+              <span className="font-semibold text-gray-700 text-sm">基準時刻</span>
+            </div>
+            <div className="flex gap-2">
+              <input
+                type="time"
+                value={selectedTime}
+                onChange={handleTimeChange}
+                className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm"
+              />
+              <button
+                onClick={handleUseCurrentTime}
+                className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap ${
+                  useCurrentTime
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-700'
+                }`}
+              >
+                現在
+              </button>
+            </div>
+          </div>
         </div>
 
         {/* 主要駅クイック選択ボタン */}
@@ -184,12 +294,12 @@ const App = () => {
           </div>
         </div>
 
-        {/* 全駅選択プルダウン */}
+        {/* 出発駅選択プルダウン */}
         <div className="bg-white rounded-lg shadow-lg p-3 mb-3">
           <label className="block">
             <div className="flex items-center gap-1 mb-2">
               <MapPin className="w-4 h-4 text-blue-600" />
-              <span className="font-semibold text-gray-700 text-sm">全駅</span>
+              <span className="font-semibold text-gray-700 text-sm">出発駅</span>
             </div>
             <select
               value={selectedStation}
@@ -204,96 +314,133 @@ const App = () => {
           </label>
         </div>
 
-        {/* 時刻選択 */}
-        <div className="bg-white rounded-lg shadow-lg p-3 mb-3">
-          <div className="flex items-center gap-1 mb-2">
-            <Clock className="w-4 h-4 text-blue-600" />
-            <span className="font-semibold text-gray-700 text-sm">基準時刻</span>
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="time"
-              value={selectedTime}
-              onChange={handleTimeChange}
-              className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm"
-            />
-            <button
-              onClick={handleUseCurrentTime}
-              className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap ${
-                useCurrentTime
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700'
-              }`}
-            >
-              現在
-            </button>
-          </div>
-        </div>
-
-        {/* 列車情報表示（横並び） */}
+        {/* 列車情報表示 */}
         {nextTrains.length > 0 && (
-          <div className="grid grid-cols-2 gap-2 mb-3">
-            {nextTrains.map((train, index) => {
-              // 番線による色分け（1,2番線は黄緑、3,4番線は濃い緑）
-              const platformColor = train.platform <= 2
-                ? 'from-lime-500 to-lime-600'
-                : 'from-green-600 to-green-700';
+          <div className="flex gap-2 mb-3">
+            {/* 左側: 駅情報 */}
+            <div className="flex flex-col py-3 px-2 bg-white rounded-lg shadow-lg">
+              <div className="text-center flex items-center justify-center h-5">
+                <div className="text-xs text-gray-600">種別</div>
+              </div>
 
-              // 列車種別の色（各停は黄緑、快速はピンク）
-              const trainTypeColor = train.trainType === '各停'
-                ? 'bg-lime-400 text-white'
-                : 'bg-pink-400 text-white';
+              <div className="border-t border-gray-300 my-2"></div>
 
-              // 列車カードの枠線色（東神奈川行きは黄緑、横浜直通は水色）
-              const borderColor = train.directToYokohama
-                ? 'border-cyan-400'
-                : 'border-lime-400';
+              <div className="text-center flex flex-col justify-center h-15">
+                <div className="text-base font-bold text-gray-800 whitespace-nowrap">
+                  {selectedStation}
+                </div>
+                <div className="text-xs text-gray-600 mt-1">発</div>
+              </div>
 
-              return (
-                <div
-                  key={index}
-                  className={`bg-white rounded-lg shadow-lg p-3 border-2 ${borderColor}`}
-                >
-                  <div className="flex flex-wrap items-center gap-1 mb-2">
-                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${trainTypeColor}`}>
-                      {train.trainType}
-                    </span>
-                  </div>
+              <div className="border-t border-gray-300 my-2"></div>
 
-                  <div className="space-y-2">
-                    <div className="bg-gray-50 rounded p-2">
-                      <div className="text-xs text-gray-600">発車</div>
-                      <div className="text-xl font-bold text-gray-800">
+              <div className="text-center flex flex-col justify-center h-15">
+                <div className="text-base font-bold text-gray-800 whitespace-nowrap">
+                  東神奈川
+                </div>
+                <div className="text-xs text-gray-600 mt-1">着</div>
+              </div>
+
+              <div className="border-t border-gray-300 my-2"></div>
+
+              <div className="text-center flex items-center justify-center h-12">
+                <div className="text-xs text-gray-600">番線</div>
+              </div>
+
+              <div className="border-t border-gray-300 my-2"></div>
+
+              <div className="text-center flex flex-col justify-center h-15">
+                <div className="text-base font-bold text-gray-800 whitespace-nowrap">
+                  横浜
+                </div>
+                <div className="text-xs text-gray-600 mt-1">着</div>
+              </div>
+            </div>
+
+            {/* 右側: 列車カード2列 */}
+            <div className="flex-1 grid grid-cols-2 gap-2">
+              {nextTrains.map((train, index) => {
+                // 番線による色分け（1,2番線は水色、それ以外は背景色なし）
+                const platformColor = train.platform <= 2
+                  ? 'bg-gradient-to-br from-cyan-500 to-cyan-600'
+                  : 'bg-gray-50';
+                const platformTextColor = train.platform <= 2
+                  ? 'text-white'
+                  : 'text-gray-800';
+
+                // 列車種別の色（各停は濃い黄緑、快速は赤）
+                const trainTypeColor = train.trainType === '普通'
+                  ? 'bg-lime-600 text-white'
+                  : 'bg-red-500 text-white';
+
+                // 列車カードの枠線色（東神奈川行きは黄緑、横浜直通は水色）
+                const borderColor = train.directToYokohama
+                  ? 'border-cyan-500'
+                  : 'border-lime-500';
+
+                // 横浜到着時刻の背景色（横浜直通は水色、それ以外は灰色）
+                const yokohamaBgColor = train.directToYokohama && train.yokohamaArrival
+                  ? 'bg-gradient-to-br from-cyan-500 to-cyan-600'
+                  : 'bg-gray-50';
+                const yokohamaTextColor = train.directToYokohama && train.yokohamaArrival
+                  ? 'text-white'
+                  : 'text-gray-400';
+
+                return (
+                  <div
+                    key={index}
+                    className={`bg-white rounded-lg shadow-lg p-3 border-8 ${borderColor} flex flex-col`}
+                  >
+                    <div className={`${trainTypeColor} rounded p-1 text-white flex items-center justify-center h-5`}>
+                      <span className="text-xs font-semibold">
+                        {train.trainType}
+                      </span>
+                    </div>
+
+                    <div className="border-t border-gray-300 my-2"></div>
+
+                    <div className="flex items-center justify-center bg-gray-50 rounded p-2 h-15">
+                      <div className="text-2xl font-bold text-gray-800">
                         {train.departure}
                       </div>
-                      <div className="text-xs text-gray-500 truncate">{selectedStation}</div>
                     </div>
 
-                    <div className="bg-gray-50 rounded p-2">
-                      <div className="text-xs text-gray-600">到着</div>
-                      <div className="text-xl font-bold text-gray-800">
+                    <div className="border-t border-gray-300 my-2"></div>
+
+                    <div className="flex items-center justify-center bg-gray-50 rounded p-2 h-15">
+                      <div className="text-2xl font-bold text-gray-800">
                         {train.arrival}
                       </div>
-                      <div className="text-xs text-gray-500">東神奈川</div>
                     </div>
 
-                    <div className={`bg-gradient-to-br ${platformColor} rounded p-2 text-white text-center`}>
-                      <div className="text-xs opacity-90">到着番線</div>
-                      <div className="text-3xl font-bold">
-                        {train.platform}
+                    <div className="border-t border-gray-300 my-2"></div>
+
+                    <div className={`${platformColor} rounded p-2 ${platformTextColor} flex items-center justify-center h-12`}>
+                      <div className="flex items-center gap-1">
+                        <div className="text-3xl font-bold">
+                          {train.platform}
+                        </div>
+                        <div className="text-lg font-bold">
+                          番線
+                        </div>
                       </div>
-                      <div className="text-xs opacity-90">番線</div>
                     </div>
 
-                    {train.directToYokohama && (
-                      <div className="px-2 py-1 bg-cyan-400 text-white rounded text-xs font-semibold text-center">
-                        {train.destination}行
-                      </div>
-                    )}
+                    <div className="border-t border-gray-300 my-2"></div>
+
+                    <div className={`flex items-center justify-center ${yokohamaBgColor} rounded p-2 h-15`}>
+                      {train.directToYokohama && train.yokohamaArrival ? (
+                        <div className={`text-2xl font-bold ${yokohamaTextColor}`}>
+                          {train.yokohamaArrival}
+                        </div>
+                      ) : (
+                        <div className={yokohamaTextColor}>-</div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -316,8 +463,8 @@ const App = () => {
 
         {/* フッター */}
         <div className="text-center text-xs text-gray-600 bg-white rounded-lg p-3 shadow">
-          <p className="font-semibold mb-1">デバッグ用サンプル</p>
-          <p>※ 実際のダイヤとは異なります</p>
+          <p className="font-semibold mb-1">ベータ版です（2025/3/15の時刻表データ）</p>
+          <p>※ 本アプリを利用して発生した損害について当方は一切関与しません</p>
         </div>
       </div>
     </div>
