@@ -21,6 +21,7 @@ const App = () => {
   const [loading, setLoading] = useState(true);
   const [dayType, setDayType] = useState('weekday'); // 'weekday' or 'holiday'
   const [useAutoDetect, setUseAutoDetect] = useState(true);
+  const [holidaySet, setHolidaySet] = useState(new Set());
 
   // 現在時刻を取得
   const getCurrentTime = () => {
@@ -31,18 +32,65 @@ const App = () => {
   // 曜日から運行日種別を判定（土日は休日扱い）
   const detectDayType = () => {
     const now = new Date();
-    const dayOfWeek = now.getDay(); // 0: 日曜, 6: 土曜
-    return (dayOfWeek === 0 || dayOfWeek === 6) ? 'holiday' : 'weekday';
+    
+    // 「-2時間した時刻」で曜日を判定
+    const shiftedDate = new Date(now.getTime());
+    shiftedDate.setHours(now.getHours() - 2);
+
+    // 祝日かどうか判定（YYYY-MM-DD）
+    const y = shiftedDate.getFullYear();
+    const m = String(shiftedDate.getMonth() + 1).padStart(2, '0');
+    const d = String(shiftedDate.getDate()).padStart(2, '0');
+    const key = `${y}-${m}-${d}`;
+
+    if (holidaySet.has(key)) {
+      return 'holiday';
+    }
+
+    // 土日判定
+    const day = shiftedDate.getDay(); // 0:日, 6:土
+    return (day === 0 || day === 6) ? 'holiday' : 'weekday';
   };
+
+  // 祝日CSV読み込み
+  useEffect(() => {
+    fetch('/data/syukujitsu.csv')
+      .then(res => res.text())
+      .then(text => {
+        const lines = text.split('\n');
+        const set = new Set();
+
+        lines.forEach(line => {
+          const raw = line.trim();
+          if (!raw) return;
+
+          const [dateStr] = raw.split(','); // 例: "2020/2/23"
+          if (!dateStr) return;
+
+          const parts = dateStr.split('/');  // ["2020", "2", "23"]
+          if (parts.length !== 3) return;
+
+          const y = parts[0];
+          const m = parts[1].padStart(2, '0');
+          const d = parts[2].padStart(2, '0');
+
+          const formatted = `${y}-${m}-${d}`;
+          set.add(formatted);
+        });
+
+        setHolidaySet(set);
+      })
+      .catch(err => console.error('祝日CSV読み込みエラー:', err));
+  }, []);
 
   // ページ読み込み時に運行日種別を自動判定
   useEffect(() => {
     if (useAutoDetect) {
       setDayType(detectDayType());
     }
-  }, [useAutoDetect]);
+  }, [useAutoDetect, holidaySet]);
 
-  // CSVデータを読み込み（運行日種別に応じて切り替え）
+  // 時刻表CSVデータを読み込み（運行日種別に応じて切り替え）
   useEffect(() => {
     setLoading(true);
     const filename = dayType === 'weekday'
