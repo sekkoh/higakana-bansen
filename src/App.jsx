@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Train, MapPin, Clock } from 'lucide-react';
+import { Train, MapPin } from 'lucide-react';
 import Papa from 'papaparse';
 
 // 横浜線全駅リスト（八王子→東神奈川方面）
@@ -20,7 +20,7 @@ const App = () => {
   const [timetableData, setTimetableData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [dayType, setDayType] = useState('weekday'); // 'weekday' or 'holiday'
-  const [useAutoDetect, setUseAutoDetect] = useState(true);
+  const [holidaySet, setHolidaySet] = useState(new Set());
 
   // 現在時刻を取得
   const getCurrentTime = () => {
@@ -31,18 +31,63 @@ const App = () => {
   // 曜日から運行日種別を判定（土日は休日扱い）
   const detectDayType = () => {
     const now = new Date();
-    const dayOfWeek = now.getDay(); // 0: 日曜, 6: 土曜
-    return (dayOfWeek === 0 || dayOfWeek === 6) ? 'holiday' : 'weekday';
+    
+    // 「-2時間した時刻」で曜日を判定
+    const shiftedDate = new Date(now.getTime());
+    shiftedDate.setHours(now.getHours() - 2);
+
+    // 祝日かどうか判定（YYYY-MM-DD）
+    const y = shiftedDate.getFullYear();
+    const m = String(shiftedDate.getMonth() + 1).padStart(2, '0');
+    const d = String(shiftedDate.getDate()).padStart(2, '0');
+    const key = `${y}-${m}-${d}`;
+
+    if (holidaySet.has(key)) {
+      return 'holiday';
+    }
+
+    // 土日判定
+    const day = shiftedDate.getDay(); // 0:日, 6:土
+    return (day === 0 || day === 6) ? 'holiday' : 'weekday';
   };
+
+  // 祝日CSV読み込み
+  useEffect(() => {
+    fetch('/data/syukujitsu.csv')
+      .then(res => res.text())
+      .then(text => {
+        const lines = text.split('\n');
+        const set = new Set();
+
+        lines.forEach(line => {
+          const raw = line.trim();
+          if (!raw) return;
+
+          const [dateStr] = raw.split(','); // 例: "2020/2/23"
+          if (!dateStr) return;
+
+          const parts = dateStr.split('/');  // ["2020", "2", "23"]
+          if (parts.length !== 3) return;
+
+          const y = parts[0];
+          const m = parts[1].padStart(2, '0');
+          const d = parts[2].padStart(2, '0');
+
+          const formatted = `${y}-${m}-${d}`;
+          set.add(formatted);
+        });
+
+        setHolidaySet(set);
+      })
+      .catch(err => console.error('祝日CSV読み込みエラー:', err));
+  }, []);
 
   // ページ読み込み時に運行日種別を自動判定
   useEffect(() => {
-    if (useAutoDetect) {
-      setDayType(detectDayType());
-    }
-  }, [useAutoDetect]);
+    setDayType(detectDayType());
+  }, [holidaySet]);
 
-  // CSVデータを読み込み（運行日種別に応じて切り替え）
+  // 時刻表CSVデータを読み込み（運行日種別に応じて切り替え）
   useEffect(() => {
     setLoading(true);
     const filename = dayType === 'weekday'
@@ -82,7 +127,8 @@ const App = () => {
 
       const referenceTime = useCurrentTime ? getCurrentTime() : selectedTime;
       const [refHour, refMinute] = referenceTime.split(':').map(Number);
-      const refMinutes = refHour * 60 + refMinute;
+      // 列車時刻と比較するための分データ：１時５９分までは25:59として計算
+      const refMinutes = (refHour < 2) ? (refHour + 24) * 60 + refMinute : refHour * 60 + refMinute;
 
       // 選択した駅のカラム名
       const stationColumn = selectedStation + '発';
@@ -166,16 +212,11 @@ const App = () => {
   const handleUseCurrentTime = () => {
     setSelectedTime(getCurrentTime());
     setUseCurrentTime(true);
+    setDayType(detectDayType());
   };
 
   const handleDayTypeChange = (type) => {
     setDayType(type);
-    setUseAutoDetect(false);
-  };
-
-  const handleAutoDetectDayType = () => {
-    setDayType(detectDayType());
-    setUseAutoDetect(true);
   };
 
   if (loading) {
@@ -202,19 +243,16 @@ const App = () => {
           </p>
         </div>
 
-        {/* 平日／土休日選択と時刻選択を横並び */}
-        <div className="flex gap-2 mb-3">
-          {/* 平日／土休日選択 */}
-          <div className="flex-1 bg-white rounded-lg shadow-lg p-3">
-            <div className="flex items-center gap-1 mb-2">
-              <Clock className="w-4 h-4 text-blue-600" />
-              <span className="font-semibold text-gray-700 text-sm">平日／土休日</span>
-            </div>
-            <div className="flex gap-2">
+        {/* 統合コントロールパネル */}
+        <div className="bg-white rounded-lg shadow-lg p-3 mb-3">
+          {/* 平日／土休日、時刻入力、現在ボタン */}
+          <div className='mb-2'>
+            <div className="text-xs font-semibold text-gray-600 mb-1">曜日・時刻選択</div>
+              <div className="flex gap-2 mb-3">
               <button
                 onClick={() => handleDayTypeChange('weekday')}
-                className={`flex-1 px-3 py-2 rounded-lg font-semibold text-sm ${
-                  dayType === 'weekday' && !useAutoDetect
+                className={`px-3 py-2 rounded-lg font-semibold text-sm ${
+                  dayType === 'weekday'
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-100 text-gray-700'
                 }`}
@@ -223,43 +261,23 @@ const App = () => {
               </button>
               <button
                 onClick={() => handleDayTypeChange('holiday')}
-                className={`flex-1 px-3 py-2 rounded-lg font-semibold text-sm ${
-                  dayType === 'holiday' && !useAutoDetect
+                className={`px-3 py-2 rounded-lg font-semibold text-sm ${
+                  dayType === 'holiday'
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-100 text-gray-700'
                 }`}
               >
                 土休日
               </button>
-              <button
-                onClick={handleAutoDetectDayType}
-                className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap ${
-                  useAutoDetect
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-100 text-gray-700'
-                }`}
-              >
-                自動
-              </button>
-            </div>
-          </div>
-
-          {/* 時刻選択 */}
-          <div className="flex-1 bg-white rounded-lg shadow-lg p-3">
-            <div className="flex items-center gap-1 mb-2">
-              <Clock className="w-4 h-4 text-blue-600" />
-              <span className="font-semibold text-gray-700 text-sm">基準時刻</span>
-            </div>
-            <div className="flex gap-2">
               <input
                 type="time"
                 value={selectedTime}
                 onChange={handleTimeChange}
-                className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm"
+                className="w-32 px-2 py-1.5 border-2 border-gray-300 rounded-lg focus:outline-none focus:border-blue-500 text-sm"
               />
               <button
                 onClick={handleUseCurrentTime}
-                className={`px-3 py-2 rounded-lg font-semibold text-xs whitespace-nowrap ${
+                className={`px-3 py-2 rounded-lg font-semibold text-sm whitespace-nowrap ${
                   useCurrentTime
                     ? 'bg-blue-600 text-white'
                     : 'bg-gray-100 text-gray-700'
@@ -269,38 +287,31 @@ const App = () => {
               </button>
             </div>
           </div>
-        </div>
+          
 
-        {/* 主要駅クイック選択ボタン */}
-        <div className="bg-white rounded-lg shadow-lg p-3 mb-3">
-          <h2 className="font-semibold text-gray-700 text-sm mb-2 flex items-center gap-1">
-            <MapPin className="w-4 h-4 text-blue-600" />
-            主要駅
-          </h2>
-          <div className="flex gap-1 overflow-x-auto pb-1">
-            {majorStations.map(station => (
-              <button
-                key={station}
-                onClick={() => handleMajorStationClick(station)}
-                className={`px-3 py-2 rounded-lg font-semibold text-sm whitespace-nowrap transition-all flex-shrink-0 ${
-                  selectedStation === station
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'bg-gray-100 text-gray-700'
-                }`}
-              >
-                {station}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 出発駅選択プルダウン */}
-        <div className="bg-white rounded-lg shadow-lg p-3 mb-3">
-          <label className="block">
-            <div className="flex items-center gap-1 mb-2">
-              <MapPin className="w-4 h-4 text-blue-600" />
-              <span className="font-semibold text-gray-700 text-sm">出発駅</span>
+          {/* 主要駅から選択 */}
+          <div className="mb-2">
+            <div className="text-xs font-semibold text-gray-600 mb-1">主要駅から選択</div>
+            <div className="flex gap-1 overflow-x-auto pb-1">
+              {majorStations.map(station => (
+                <button
+                  key={station}
+                  onClick={() => handleMajorStationClick(station)}
+                  className={`px-3 py-2 rounded-lg font-semibold text-sm whitespace-nowrap transition-all flex-shrink-0 ${
+                    selectedStation === station
+                      ? 'bg-blue-600 text-white shadow-md'
+                      : 'bg-gray-100 text-gray-700'
+                  }`}
+                >
+                  {station}
+                </button>
+              ))}
             </div>
+          </div>
+
+          {/* 全駅 */}
+          <div>
+            <div className="text-xs font-semibold text-gray-600 mb-1">全駅</div>
             <select
               value={selectedStation}
               onChange={(e) => setSelectedStation(e.target.value)}
@@ -311,7 +322,7 @@ const App = () => {
                 <option key={station} value={station}>{station}</option>
               ))}
             </select>
-          </label>
+          </div>
         </div>
 
         {/* 列車情報表示 */}
